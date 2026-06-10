@@ -1,9 +1,11 @@
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { kv } from "@vercel/kv";
 import { getConfig } from "../config";
 import type { Job } from "../types";
 
-const memoryStore = new Map<string, Job>();
-let warnedInMemory = false;
+const memoryCache = new Map<string, Job>();
+let warnedDevStore = false;
 
 function jobKey(id: string): string {
   return `ocr:job:${id}`;
@@ -14,13 +16,51 @@ function isKvEnabled(): boolean {
   return Boolean(config.KV_REST_API_URL && config.KV_REST_API_TOKEN);
 }
 
-function warnInMemoryOnce(): void {
-  if (!warnedInMemory && process.env.NODE_ENV === "development") {
-    console.warn(
-      "[job-store] KV not configured — using in-memory store (state lost on restart)",
-    );
-    warnedInMemory = true;
+function devJobsDir(): string {
+  return path.join(process.cwd(), ".tmp", "ocr-jobs");
+}
+
+function devJobFile(id: string): string {
+  return path.join(devJobsDir(), `${id}.json`);
+}
+
+function warnDevStoreOnce(): void {
+  if (warnedDevStore) {
+    return;
   }
+  warnedDevStore = true;
+  if (process.env.VERCEL === "1") {
+    console.error(
+      "[job-store] KV not configured on Vercel — job state will not persist reliably. Add Upstash Redis / Vercel KV.",
+    );
+    return;
+  }
+  console.warn(
+    "[job-store] KV not configured — persisting jobs under .tmp/ocr-jobs/",
+  );
+}
+
+async function readDevJob(id: string): Promise<Job | null> {
+  const cached = memoryCache.get(id);
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const raw = await readFile(devJobFile(id), "utf8");
+    const job = JSON.parse(raw) as Job;
+    memoryCache.set(id, job);
+    return job;
+  } catch {
+    return null;
+  }
+}
+
+async function writeDevJob(job: Job): Promise<void> {
+  warnDevStoreOnce();
+  await mkdir(devJobsDir(), { recursive: true });
+  await writeFile(devJobFile(job.id), JSON.stringify(job), "utf8");
+  memoryCache.set(job.id, job);
 }
 
 export async function saveJob(job: Job): Promise<void> {
@@ -30,8 +70,7 @@ export async function saveJob(job: Job): Promise<void> {
     return;
   }
 
-  warnInMemoryOnce();
-  memoryStore.set(job.id, job);
+  await writeDevJob(job);
 }
 
 export async function getJob(id: string): Promise<Job | null> {
@@ -39,7 +78,7 @@ export async function getJob(id: string): Promise<Job | null> {
     return (await kv.get<Job>(jobKey(id))) ?? null;
   }
 
-  return memoryStore.get(id) ?? null;
+  return readDevJob(id);
 }
 
 export async function listJobs(limit = 20): Promise<Job[]> {
@@ -57,7 +96,25 @@ export async function listJobs(limit = 20): Promise<Job[]> {
       .slice(0, limit);
   }
 
-  return [...memoryStore.values()]
+  warnDevStoreOnce();
+  let ids: string[] = [];
+  try {
+    const files = await readdir(devJobsDir());
+    ids = files.filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5));
+  } catch {
+    return [...memoryCache.values()]
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      )
+      .slice(0, limit);
+  }
+
+  const jobs = (
+    await Promise.all(ids.map((id) => readDevJob(id)))
+  ).filter((job): job is Job => job !== null);
+
+  return jobs
     .sort(
       (a, b) =>
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),

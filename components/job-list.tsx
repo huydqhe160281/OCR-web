@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { buildDocxDownloadPath } from "@/lib/blob";
 import type { Job } from "@/lib/types";
 import { ProgressBar } from "./progress-bar";
 
@@ -39,11 +40,10 @@ export function JobList({ jobs }: JobListProps) {
                 <p className="mt-2 text-xs text-red-600">{job.error}</p>
               ) : null}
             </div>
-            {job.status === "completed" && job.outputBlobUrl ? (
+            {job.status === "completed" ? (
               <a
-                href={job.outputBlobUrl}
+                href={buildDocxDownloadPath(job.id)}
                 className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500"
-                download
               >
                 DOCX
               </a>

@@ -3,6 +3,8 @@
 import { upload } from "@vercel/blob/client";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
+import { buildBlobPathname } from "@/lib/blob-pathname";
+import { BLOB_ACCESS } from "@/lib/blob-constants";
 import { SUPPORTED_MIME_TYPES } from "@/lib/types";
 
 const MAX_FILE_SIZE_MB = Number(process.env.NEXT_PUBLIC_MAX_FILE_SIZE_MB ?? 25);
@@ -34,9 +36,11 @@ export function UploadZone() {
 
       setUploading(true);
       try {
-        const blob = await upload(file.name, file, {
-          access: "public",
+        const pathname = buildBlobPathname(file.name);
+        const blob = await upload(pathname, file, {
+          access: BLOB_ACCESS,
           handleUploadUrl: "/api/upload",
+          contentType: file.type || undefined,
         });
 
         const response = await fetch("/api/jobs", {

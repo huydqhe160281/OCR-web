@@ -2,7 +2,10 @@ import { z } from "zod";
 
 const envSchema = z.object({
   GEMINI_API_KEY: z.string().min(1, "GEMINI_API_KEY is required"),
-  BLOB_READ_WRITE_TOKEN: z.string().optional(),
+  BLOB_READ_WRITE_TOKEN: z
+    .string()
+    .optional()
+    .transform((value) => value?.replace(/^["']|["']$/g, "").trim() || undefined),
   GEMINI_OCR_MODEL: z.string().default("gemini-2.5-flash"),
   GEMINI_STRUCTURE_MODEL: z.string().default("gemini-2.5-pro"),
   MAX_FILE_SIZE_MB: z.coerce.number().int().positive().default(25),

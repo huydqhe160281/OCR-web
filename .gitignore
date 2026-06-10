@@ -39,6 +39,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# local dev job persistence (no KV)
+/.tmp/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

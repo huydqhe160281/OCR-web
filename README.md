@@ -180,6 +180,7 @@ vercel deploy
 
 | Triệu chứng | Nguyên nhân thường gặp | Cách xử lý |
 |-------------|------------------------|------------|
+| Upload failed / 400 Bad Request | Blob store **private** nhưng code dùng `public`, hoặc thiếu token | App dùng `access: private` — kiểm tra `BLOB_READ_WRITE_TOKEN` (không bọc dấu `"`) |
 | Upload failed | Thiếu `BLOB_READ_WRITE_TOKEN` | Kiểm tra `.env.local` hoặc Vercel env |
 | Job failed ngay | Thiếu / sai `GEMINI_API_KEY` | Tạo lại key tại AI Studio |
 | Job mất sau vài phút | Không có KV trên Vercel | Thêm Upstash Redis integration |

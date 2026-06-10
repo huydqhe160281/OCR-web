@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { buildDocxDownloadPath } from "@/lib/blob";
 import type { Job } from "@/lib/types";
 import { PreviewPanel } from "@/components/preview-panel";
 import { ProgressBar } from "@/components/progress-bar";
@@ -54,10 +55,9 @@ export function JobDetailClient({ initialJob }: JobDetailClientProps) {
         {job.error ? <p className="mt-3 text-sm text-red-600">{job.error}</p> : null}
       </header>
 
-      {job.outputBlobUrl ? (
+      {job.status === "completed" ? (
         <a
-          href={job.outputBlobUrl}
-          download
+          href={buildDocxDownloadPath(job.id)}
           className="mb-6 inline-flex rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-500"
         >
           Download DOCX
