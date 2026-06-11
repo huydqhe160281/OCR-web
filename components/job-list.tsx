@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { buildDocxDownloadPath } from "@/lib/blob";
+import { formatDateTimeUtc } from "@/lib/format-datetime";
 import type { Job } from "@/lib/types";
 import { ProgressBar } from "./progress-bar";
 
@@ -29,7 +30,7 @@ export function JobList({ jobs }: JobListProps) {
                 {job.fileName}
               </Link>
               <p className="mt-1 text-xs text-zinc-500">
-                {job.status} · {new Date(job.createdAt).toLocaleString()}
+                {job.status} · {formatDateTimeUtc(job.createdAt)}
               </p>
               {job.status === "processing" || job.status === "queued" ? (
                 <div className="mt-3">

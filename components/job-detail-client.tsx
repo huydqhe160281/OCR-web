@@ -67,6 +67,12 @@ export function JobDetailClient({ initialJob }: JobDetailClientProps) {
       {job.blocks && job.blocks.length > 0 ? (
         <section>
           <h2 className="mb-3 text-lg font-semibold">Preview</h2>
+          {job.blocksPreviewTruncated ? (
+            <p className="mb-3 text-sm text-amber-700">
+              Preview shows the first {job.blocks.length} of {job.blocksTotalCount}{" "}
+              blocks. Download DOCX for the full document.
+            </p>
+          ) : null}
           <PreviewPanel blocks={job.blocks} />
         </section>
       ) : null}

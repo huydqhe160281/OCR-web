@@ -1,7 +1,6 @@
 import sharp from "sharp";
 import { MimeType, type OcrInput, type ParseResult } from "../types";
-
-const MAX_EDGE_PX = 2048;
+import { MAX_EDGE_PX } from "./image-constants";
 
 export async function parseImage(
   buffer: Buffer,

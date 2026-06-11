@@ -29,6 +29,10 @@ export async function POST(
     return NextResponse.json({ job, message: "Already processing" });
   }
 
+  if (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) {
+    return NextResponse.json({ job, message: "Job already finished" });
+  }
+
   await runJobProcessing(parsed.data.id);
   const updated = await getJob(parsed.data.id);
   return NextResponse.json({ job: updated });

@@ -4,6 +4,7 @@ import {
   type Part,
 } from "@google/generative-ai";
 import { getConfig } from "../config";
+import { JobErrorCode, JobProcessingError } from "../errors";
 import {
   BlockConfidence,
   BlockLanguage,
@@ -113,6 +114,21 @@ function inputToPart(input: OcrInput): Part {
   };
 }
 
+function assertNonEmptyOcrResult(
+  blocks: OcrBlock[],
+  inputs: OcrInput[],
+  pageStart: number,
+  pageEnd: number,
+): OcrBlock[] {
+  if (blocks.length === 0 && inputs.length > 0) {
+    throw new JobProcessingError(
+      JobErrorCode.OCR_FAILED,
+      `Gemini returned no OCR blocks for pages ${pageStart}-${pageEnd}`,
+    );
+  }
+  return blocks;
+}
+
 export async function ocrInputs(
   inputs: OcrInput[],
   pageStart: number,
@@ -132,10 +148,15 @@ export async function ocrInputs(
       const result = await model.generateContent(parts);
       const text = result.response.text();
       const parsed = parseOcrJsonResponse(text);
-      return normalizeOcrBlocks(parsed, pageStart);
+      const blocks = normalizeOcrBlocks(parsed, pageStart);
+      return assertNonEmptyOcrResult(blocks, inputs, pageStart, pageEnd);
     } catch (error) {
       lastError = error;
-      if (!isRetryableError(error) || attempt >= config.retryBackoffMs.length) {
+      if (
+        error instanceof JobProcessingError ||
+        !isRetryableError(error) ||
+        attempt >= config.retryBackoffMs.length
+      ) {
         throw error;
       }
       await sleep(config.retryBackoffMs[attempt] ?? 1000);
@@ -157,8 +178,27 @@ export async function refineBlocks(
     },
   ];
 
-  const result = await model.generateContent(parts);
-  const parsed = parseOcrJsonResponse(result.response.text());
-  const normalized = normalizeOcrBlocks(parsed, blocks[0]?.page ?? 1);
-  return normalized.length > 0 ? normalized : blocks;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= config.retryBackoffMs.length; attempt++) {
+    try {
+      const result = await model.generateContent(parts);
+      const parsed = parseOcrJsonResponse(result.response.text());
+      const normalized = normalizeOcrBlocks(parsed, blocks[0]?.page ?? 1);
+      return normalized.length > 0 ? normalized : blocks;
+    } catch (error) {
+      if (
+        error instanceof JobProcessingError ||
+        !isRetryableError(error) ||
+        attempt >= config.retryBackoffMs.length
+      ) {
+        if (isRetryableError(error)) {
+          return blocks;
+        }
+        throw error;
+      }
+      await sleep(config.retryBackoffMs[attempt] ?? 1000);
+    }
+  }
+
+  return blocks;
 }

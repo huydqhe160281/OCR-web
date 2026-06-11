@@ -1,16 +1,21 @@
-import { fetchBlobBuffer, uploadOutputDocx } from "./blob";
-import { getConfig } from "./config";
-import { JobErrorCode, JobProcessingError } from "./errors";
-import { buildDocxBuffer } from "./export/docx-builder";
-import { updateJob } from "./jobs/job-store";
-import { mergeBlocks } from "./merge-blocks";
-import { processOcrBatches } from "./ocr/batch-processor";
-import { maybeStructurePass } from "./ocr/structure-pass";
-import { parseDocument } from "./parsers";
-import { JobStatus, type Job } from "./types";
+import { fetchBlobBuffer, uploadOutputDocx } from "../blob";
+import { getConfig } from "../config";
+import { JobErrorCode, JobProcessingError } from "../errors";
+import { buildDocxBuffer } from "../export/docx-builder";
+import { getJob, tryClaimJobProcessing, updateJob } from "./job-store";
+import { mergeBlocks } from "../merge-blocks";
+import { processOcrBatches } from "../ocr/batch-processor";
+import { maybeStructurePass } from "../ocr/structure-pass";
+import { parseDocument } from "../parsers";
+import { JobStatus, type Job } from "../types";
 
 export async function processJob(jobId: string): Promise<void> {
-  const job = await updateJob(jobId, { status: JobStatus.PROCESSING });
+  const claimed = await tryClaimJobProcessing(jobId);
+  if (!claimed) {
+    return;
+  }
+
+  const job = await getJob(jobId);
   if (!job) {
     return;
   }
@@ -27,9 +32,15 @@ export async function processJob(jobId: string): Promise<void> {
       );
     }
 
-    const ocrBlocks = await processOcrBatches(parsed.ocrInputs, async (current, total) => {
+    const totalProgressUnits = Math.max(parsed.pageCount, parsed.ocrInputs.length);
+
+    await updateJob(jobId, {
+      progress: { current: 0, total: totalProgressUnits },
+    });
+
+    const ocrBlocks = await processOcrBatches(parsed.ocrInputs, async (current) => {
       await updateJob(jobId, {
-        progress: { current, total: Math.max(total, parsed.pageCount) },
+        progress: { current, total: totalProgressUnits },
       });
     });
 
@@ -41,7 +52,7 @@ export async function processJob(jobId: string): Promise<void> {
 
     await updateJob(jobId, {
       status: JobStatus.COMPLETED,
-      progress: { current: parsed.pageCount, total: parsed.pageCount },
+      progress: { current: totalProgressUnits, total: totalProgressUnits },
       blocks: merged,
       outputBlobUrl,
       completedAt: new Date().toISOString(),

@@ -56,5 +56,20 @@ export function getConfigOrNull(): AppConfig | null {
   }
 }
 
+export function assertProductionKvConfigured(): void {
+  if (process.env.VERCEL !== "1") {
+    return;
+  }
+
+  const config = getConfig();
+  if (config.KV_REST_API_URL && config.KV_REST_API_TOKEN) {
+    return;
+  }
+
+  throw new Error(
+    "[job-store] KV not configured on Vercel — configure Upstash Redis / Vercel KV (KV_REST_API_URL, KV_REST_API_TOKEN).",
+  );
+}
+
 export const BATCH_SIZE = 5;
 export const MAX_CONCURRENT_BATCHES = 3;

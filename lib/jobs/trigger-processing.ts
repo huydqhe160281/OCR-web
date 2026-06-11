@@ -1,4 +1,4 @@
-import { processJob } from "@/lib/process-job";
+import { processJob } from "./process-job";
 
 /**
  * Runs OCR pipeline for a job. Used by Next.js `after()` or future Inngest worker.

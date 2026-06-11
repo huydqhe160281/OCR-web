@@ -4,8 +4,8 @@ import {
   BlockLanguage,
   OcrBlockType,
   type OcrBlock,
-} from "../types";
-import { buildDocxBuffer } from "./docx-builder";
+} from "@/lib/types";
+import { buildDocxBuffer } from "@/lib/export/docx-builder";
 
 describe("buildDocxBuffer", () => {
   it("builds docx for heading paragraph and table", async () => {

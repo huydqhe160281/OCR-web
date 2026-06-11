@@ -69,6 +69,8 @@ export interface Job {
   progress: JobProgress;
   outputBlobUrl?: string;
   blocks?: OcrBlock[];
+  blocksPreviewTruncated?: boolean;
+  blocksTotalCount?: number;
   error?: string;
   errorCode?: string;
   createdAt: string;

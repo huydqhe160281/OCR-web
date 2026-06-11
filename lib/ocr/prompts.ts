@@ -1,3 +1,5 @@
+import { JobErrorCode, JobProcessingError } from "../errors";
+
 export const OCR_SYSTEM_PROMPT = `You are a document OCR assistant. Extract all visible text from the provided document images or PDF pages.
 Return ONLY valid JSON: an array of objects with fields:
 - page (number, 1-based)
@@ -31,5 +33,13 @@ export function parseOcrJsonResponse(raw: string): unknown {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
   const jsonText = fenced ? fenced[1].trim() : trimmed;
-  return JSON.parse(jsonText);
+
+  try {
+    return JSON.parse(jsonText);
+  } catch {
+    throw new JobProcessingError(
+      JobErrorCode.OCR_FAILED,
+      "Gemini returned invalid JSON for OCR blocks",
+    );
+  }
 }

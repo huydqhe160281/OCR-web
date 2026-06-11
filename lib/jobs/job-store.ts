@@ -1,8 +1,9 @@
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { kv } from "@vercel/kv";
-import { getConfig } from "../config";
-import type { Job } from "../types";
+import { assertProductionKvConfigured, getConfig } from "../config";
+import { slimJobForStorage } from "./job-slim";
+import { JobStatus, type Job } from "../types";
 
 const memoryCache = new Map<string, Job>();
 let warnedDevStore = false;
@@ -29,12 +30,6 @@ function warnDevStoreOnce(): void {
     return;
   }
   warnedDevStore = true;
-  if (process.env.VERCEL === "1") {
-    console.error(
-      "[job-store] KV not configured on Vercel — job state will not persist reliably. Add Upstash Redis / Vercel KV.",
-    );
-    return;
-  }
   console.warn(
     "[job-store] KV not configured — persisting jobs under .tmp/ocr-jobs/",
   );
@@ -64,13 +59,17 @@ async function writeDevJob(job: Job): Promise<void> {
 }
 
 export async function saveJob(job: Job): Promise<void> {
+  assertProductionKvConfigured();
+
+  const persisted = slimJobForStorage(job);
+
   if (isKvEnabled()) {
     const ttlSeconds = getConfig().JOB_TTL_HOURS * 3600;
-    await kv.set(jobKey(job.id), job, { ex: ttlSeconds });
+    await kv.set(jobKey(job.id), persisted, { ex: ttlSeconds });
     return;
   }
 
-  await writeDevJob(job);
+  await writeDevJob(persisted);
 }
 
 export async function getJob(id: string): Promise<Job | null> {
@@ -134,4 +133,26 @@ export async function updateJob(
   const updated: Job = { ...existing, ...patch };
   await saveJob(updated);
   return updated;
+}
+
+export async function updateJobIfStatus(
+  id: string,
+  expectedStatus: JobStatus,
+  patch: Partial<Job>,
+): Promise<Job | null> {
+  const existing = await getJob(id);
+  if (!existing || existing.status !== expectedStatus) {
+    return null;
+  }
+
+  const updated: Job = { ...existing, ...patch };
+  await saveJob(updated);
+  return updated;
+}
+
+export async function tryClaimJobProcessing(id: string): Promise<boolean> {
+  const updated = await updateJobIfStatus(id, JobStatus.QUEUED, {
+    status: JobStatus.PROCESSING,
+  });
+  return updated !== null;
 }

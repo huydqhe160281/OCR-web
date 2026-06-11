@@ -10,24 +10,25 @@ import {
   type ParseResult,
 } from "../types";
 import { JobErrorCode, JobProcessingError } from "../errors";
+import { renderPdfPagePng } from "./pdf-render";
 
-const MIN_NATIVE_TEXT_LENGTH = 32;
+export const MIN_NATIVE_TEXT_LENGTH = 32;
 
-function splitTextIntoBlocks(text: string, pageCount: number): OcrBlock[] {
-  const paragraphs = text
+function textToNativeBlocks(text: string, page: number): OcrBlock[] {
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const paragraphs = trimmed
     .split(/\n{2,}/)
     .map((part) => part.trim())
     .filter(Boolean);
 
-  if (paragraphs.length === 0) {
-    return [];
-  }
+  const parts = paragraphs.length > 0 ? paragraphs : [trimmed];
 
-  const pages = Math.max(pageCount, 1);
-  const perPage = Math.max(1, Math.ceil(paragraphs.length / pages));
-
-  return paragraphs.map((paragraph, index) => ({
-    page: Math.min(pages, Math.floor(index / perPage) + 1),
+  return parts.map((paragraph) => ({
+    page,
     type: OcrBlockType.PARAGRAPH,
     text: paragraph,
     language: BlockLanguage.UNKNOWN,
@@ -35,13 +36,15 @@ function splitTextIntoBlocks(text: string, pageCount: number): OcrBlock[] {
   }));
 }
 
-async function extractPdfText(buffer: Buffer): Promise<string> {
+async function extractPerPageText(buffer: Buffer): Promise<Map<number, string>> {
   const parser = new PDFParse({ data: buffer });
   try {
     const textResult = await parser.getText();
-    return textResult.text?.trim() ?? "";
+    return new Map(
+      textResult.pages.map((page) => [page.num, page.text?.trim() ?? ""]),
+    );
   } catch {
-    return "";
+    return new Map();
   } finally {
     await parser.destroy();
   }
@@ -66,24 +69,25 @@ export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
     );
   }
 
-  const extractedText = await extractPdfText(buffer);
+  const pageText = await extractPerPageText(buffer);
+  const nativeBlocks: OcrBlock[] = [];
+  const ocrInputs: OcrInput[] = [];
 
-  const nativeBlocks =
-    extractedText.length >= MIN_NATIVE_TEXT_LENGTH
-      ? splitTextIntoBlocks(extractedText, pageCount)
-      : [];
+  for (let page = 1; page <= pageCount; page += 1) {
+    const text = pageText.get(page) ?? "";
+    if (text.length >= MIN_NATIVE_TEXT_LENGTH) {
+      nativeBlocks.push(...textToNativeBlocks(text, page));
+      continue;
+    }
 
-  const ocrInputs: OcrInput[] =
-    nativeBlocks.length > 0
-      ? []
-      : [
-          {
-            page: 1,
-            mimeType: MimeType.PDF,
-            data: buffer,
-            label: `pdf-full-${pageCount}pages`,
-          },
-        ];
+    const png = await renderPdfPagePng(buffer, page);
+    ocrInputs.push({
+      page,
+      mimeType: MimeType.PNG,
+      data: png,
+      label: `pdf-page-${page}`,
+    });
+  }
 
   return { pageCount, nativeBlocks, ocrInputs };
 }

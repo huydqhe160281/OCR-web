@@ -5,7 +5,7 @@ import {
   JobStatus,
   MimeType,
   OcrBlockType,
-} from "./types";
+} from "@/lib/types";
 
 describe("types", () => {
   it("exports job status values", () => {

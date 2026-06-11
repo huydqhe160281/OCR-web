@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createJobBodySchema, jobIdParamSchema } from "./schemas";
+import { createJobBodySchema, jobIdParamSchema } from "@/lib/api/schemas";
 
 describe("createJobBodySchema", () => {
   it("accepts valid job payload", () => {
@@ -18,6 +18,24 @@ describe("createJobBodySchema", () => {
       mimeType: "application/zip",
     });
     expect(result.success).toBe(false);
+  });
+
+  it("rejects foreign blob host", () => {
+    const result = createJobBodySchema.safeParse({
+      blobUrl: "https://evil.example.com/file.pdf",
+      fileName: "report.pdf",
+      mimeType: "application/pdf",
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts public blob subdomain", () => {
+    const result = createJobBodySchema.safeParse({
+      blobUrl: "https://abc123.public.blob.vercel-storage.com/file.pdf",
+      fileName: "report.pdf",
+      mimeType: "application/pdf",
+    });
+    expect(result.success).toBe(true);
   });
 
   it("rejects missing blobUrl", () => {

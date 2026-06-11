@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { mergeBlocks } from "./merge-blocks";
+import { mergeBlocks } from "@/lib/merge-blocks";
 import {
   BlockConfidence,
   OcrBlockType,
   type OcrBlock,
-} from "./types";
+} from "@/lib/types";
 
 describe("mergeBlocks", () => {
   it("orders blocks by page then type", () => {
