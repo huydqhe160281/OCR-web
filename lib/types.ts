@@ -45,6 +45,21 @@ export const BlockConfidence = {
 export type BlockConfidence =
   (typeof BlockConfidence)[keyof typeof BlockConfidence];
 
+export const LayoutRegion = {
+  LEFT: "left",
+  CENTER: "center",
+  RIGHT: "right",
+} as const;
+
+export type LayoutRegion = (typeof LayoutRegion)[keyof typeof LayoutRegion];
+
+export interface LayoutBbox {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface OcrBlock {
   page: number;
   type: OcrBlockType;
@@ -53,6 +68,8 @@ export interface OcrBlock {
   language?: BlockLanguage;
   confidence?: BlockConfidence;
   rows?: string[][];
+  bbox?: LayoutBbox;
+  region?: LayoutRegion;
 }
 
 export interface JobProgress {

@@ -2,12 +2,22 @@ import { fetchBlobBuffer, uploadOutputDocx } from "../blob";
 import { getConfig } from "../config";
 import { JobErrorCode, JobProcessingError } from "../errors";
 import { buildDocxBuffer } from "../export/docx-builder";
+import { buildLayoutDocxBuffer } from "../export/layout-docx-builder";
 import { getJob, tryClaimJobProcessing, updateJob } from "./job-store";
 import { mergeBlocks } from "../merge-blocks";
+import {
+  formatValidationErrors,
+  runCompletenessGate,
+} from "../ocr/completeness-gate";
 import { processOcrBatches } from "../ocr/batch-processor";
 import { maybeStructurePass } from "../ocr/structure-pass";
+import { runLayoutVerifyPass } from "../ocr/verify-pass";
 import { parseDocument } from "../parsers";
-import { JobStatus, type Job } from "../types";
+import { JobStatus, type Job, type OcrInput } from "../types";
+
+function pageImageMap(inputs: OcrInput[]): Map<number, OcrInput> {
+  return new Map(inputs.map((input) => [input.page, input]));
+}
 
 export async function processJob(jobId: string): Promise<void> {
   const claimed = await tryClaimJobProcessing(jobId);
@@ -22,6 +32,7 @@ export async function processJob(jobId: string): Promise<void> {
 
   try {
     const config = getConfig();
+    const layoutMode = config.LAYOUT_EXPORT_V2;
     const buffer = await fetchBlobBuffer(job.blobUrl);
     const parsed = await parseDocument(buffer, job.mimeType, job.fileName);
 
@@ -38,16 +49,42 @@ export async function processJob(jobId: string): Promise<void> {
       progress: { current: 0, total: totalProgressUnits },
     });
 
-    const ocrBlocks = await processOcrBatches(parsed.ocrInputs, async (current) => {
-      await updateJob(jobId, {
-        progress: { current, total: totalProgressUnits },
-      });
-    });
+    const ocrBlocks = await processOcrBatches(
+      parsed.ocrInputs,
+      async (current) => {
+        await updateJob(jobId, {
+          progress: { current, total: totalProgressUnits },
+        });
+      },
+      { fileName: job.fileName },
+    );
 
-    let merged = mergeBlocks(parsed.nativeBlocks, ocrBlocks);
-    merged = await maybeStructurePass(merged);
+    let merged = mergeBlocks(parsed.nativeBlocks, ocrBlocks, layoutMode);
 
-    const docxBuffer = await buildDocxBuffer(merged);
+    if (layoutMode) {
+      let validation = runCompletenessGate(merged, config);
+      if (!validation.ok) {
+        merged = await runLayoutVerifyPass(
+          merged,
+          validation.issues,
+          pageImageMap(parsed.ocrInputs),
+          job.fileName,
+        );
+        validation = runCompletenessGate(merged, config);
+      }
+      if (!validation.ok) {
+        throw new JobProcessingError(
+          JobErrorCode.OCR_FAILED,
+          formatValidationErrors(validation.issues),
+        );
+      }
+    } else {
+      merged = await maybeStructurePass(merged);
+    }
+
+    const docxBuffer = layoutMode
+      ? await buildLayoutDocxBuffer(merged)
+      : await buildDocxBuffer(merged);
     const outputBlobUrl = await uploadOutputDocx(jobId, docxBuffer);
 
     await updateJob(jobId, {

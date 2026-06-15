@@ -19,7 +19,12 @@ vi.mock("@/lib/parsers/pdf-render", () => ({
   renderPdfPagePng: mockRenderPdfPagePng,
 }));
 
+vi.mock("@/lib/config", () => ({
+  getConfig: vi.fn(() => ({ LAYOUT_EXPORT_V2: false })),
+}));
+
 const { parsePdf } = await import("@/lib/parsers/pdf-parser");
+const { getConfig } = await import("@/lib/config");
 
 describe("parsePdf", () => {
   beforeEach(() => {
@@ -81,5 +86,29 @@ describe("parsePdf", () => {
     await expect(parsePdf(Buffer.from("not-a-pdf"))).rejects.toMatchObject({
       code: JobErrorCode.PARSE_FAILED,
     });
+  });
+
+  it("always OCR every page in layout mode even when native text exists", async () => {
+    vi.mocked(getConfig).mockReturnValue({
+      LAYOUT_EXPORT_V2: true,
+    } as ReturnType<typeof getConfig>);
+
+    mockGetText.mockResolvedValue({
+      pages: [
+        {
+          num: 1,
+          text: "Page one has plenty of selectable native PDF text content.",
+        },
+      ],
+    });
+
+    const pdf = await PDFDocument.create();
+    pdf.addPage();
+    const bytes = await pdf.save();
+
+    const result = await parsePdf(Buffer.from(bytes));
+    expect(result.nativeBlocks).toHaveLength(0);
+    expect(result.ocrInputs).toHaveLength(1);
+    expect(mockRenderPdfPagePng).toHaveBeenCalledWith(expect.any(Buffer), 1);
   });
 });

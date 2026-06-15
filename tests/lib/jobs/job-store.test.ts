@@ -64,4 +64,24 @@ describe("tryClaimJobProcessing", () => {
     expect(second).toBe(false);
     expect(stored?.status).toBe(JobStatus.PROCESSING);
   });
+
+  it("deleteJob removes job from dev store", async () => {
+    const { saveJob, getJob, deleteJob } = await import("@/lib/jobs/job-store");
+    const job = {
+      id: "770e8400-e29b-41d4-a716-446655440002",
+      fileName: "c.pdf",
+      mimeType: "application/pdf",
+      blobUrl: "https://example.blob.vercel-storage.com/c.pdf",
+      status: JobStatus.COMPLETED,
+      progress: { current: 1, total: 1 },
+      createdAt: new Date().toISOString(),
+    };
+
+    await saveJob(job);
+    expect(await getJob(job.id)).not.toBeNull();
+
+    const deleted = await deleteJob(job.id);
+    expect(deleted).toBe(true);
+    expect(await getJob(job.id)).toBeNull();
+  });
 });

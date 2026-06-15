@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createJobBodySchema, jobIdParamSchema } from "@/lib/api/schemas";
+import {
+  bulkJobActionSchema,
+  createJobBodySchema,
+  jobIdParamSchema,
+} from "@/lib/api/schemas";
 
 describe("createJobBodySchema", () => {
   it("accepts valid job payload", () => {
@@ -57,6 +61,34 @@ describe("jobIdParamSchema", () => {
 
   it("rejects non-uuid", () => {
     const result = jobIdParamSchema.safeParse({ id: "not-a-uuid" });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("bulkJobActionSchema", () => {
+  const id = "550e8400-e29b-41d4-a716-446655440000";
+
+  it("accepts delete action", () => {
+    const result = bulkJobActionSchema.safeParse({
+      ids: [id],
+      action: "delete",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts download action", () => {
+    const result = bulkJobActionSchema.safeParse({
+      ids: [id],
+      action: "download",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects empty ids", () => {
+    const result = bulkJobActionSchema.safeParse({
+      ids: [],
+      action: "delete",
+    });
     expect(result.success).toBe(false);
   });
 });

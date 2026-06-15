@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { parseParams } from "@/lib/api/parse-request";
 import { jobIdParamSchema } from "@/lib/api/schemas";
-import { getJob } from "@/lib/jobs/job-store";
+import { getJob, updateJob } from "@/lib/jobs/job-store";
 import { runJobProcessing } from "@/lib/jobs/trigger-processing";
 import { JobStatus } from "@/lib/types";
 
@@ -29,8 +29,18 @@ export async function POST(
     return NextResponse.json({ job, message: "Already processing" });
   }
 
-  if (job.status === JobStatus.COMPLETED || job.status === JobStatus.FAILED) {
+  if (job.status === JobStatus.COMPLETED) {
     return NextResponse.json({ job, message: "Job already finished" });
+  }
+
+  if (job.status === JobStatus.FAILED) {
+    await updateJob(job.id, {
+      status: JobStatus.QUEUED,
+      error: undefined,
+      errorCode: undefined,
+      completedAt: undefined,
+      progress: { current: 0, total: 0 },
+    });
   }
 
   await runJobProcessing(parsed.data.id);

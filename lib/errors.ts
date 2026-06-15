@@ -17,3 +17,24 @@ export class JobProcessingError extends Error {
     this.name = "JobProcessingError";
   }
 }
+
+export const LayoutValidationReason = {
+  TABLE_JAGGED_ROWS: "TABLE_JAGGED_ROWS",
+  MISSING_NUMERIC_CELL: "MISSING_NUMERIC_CELL",
+  ARITHMETIC_MISMATCH: "ARITHMETIC_MISMATCH",
+} as const;
+
+export type LayoutValidationReason =
+  (typeof LayoutValidationReason)[keyof typeof LayoutValidationReason];
+
+export interface LayoutValidationIssue {
+  reason: LayoutValidationReason;
+  message: string;
+  page?: number;
+  rowIndex?: number;
+}
+
+export interface LayoutValidationResult {
+  ok: boolean;
+  issues: LayoutValidationIssue[];
+}

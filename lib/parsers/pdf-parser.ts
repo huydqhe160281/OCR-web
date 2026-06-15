@@ -1,5 +1,6 @@
 import { PDFDocument } from "pdf-lib";
 import { PDFParse } from "pdf-parse";
+import { getConfig } from "../config";
 import {
   BlockConfidence,
   BlockLanguage,
@@ -70,11 +71,24 @@ export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
   }
 
   const pageText = await extractPerPageText(buffer);
+  const layoutMode = getConfig().LAYOUT_EXPORT_V2;
   const nativeBlocks: OcrBlock[] = [];
   const ocrInputs: OcrInput[] = [];
 
   for (let page = 1; page <= pageCount; page += 1) {
     const text = pageText.get(page) ?? "";
+
+    if (layoutMode) {
+      const png = await renderPdfPagePng(buffer, page);
+      ocrInputs.push({
+        page,
+        mimeType: MimeType.PNG,
+        data: png,
+        label: `pdf-page-${page}`,
+      });
+      continue;
+    }
+
     if (text.length >= MIN_NATIVE_TEXT_LENGTH) {
       nativeBlocks.push(...textToNativeBlocks(text, page));
       continue;

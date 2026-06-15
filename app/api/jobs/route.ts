@@ -2,6 +2,7 @@ import { after, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import { parseJsonBody } from "@/lib/api/parse-request";
 import { createJobBodySchema } from "@/lib/api/schemas";
+import { getConfig } from "@/lib/config";
 import { listJobs, saveJob } from "@/lib/jobs/job-store";
 import {
   runJobProcessing,
@@ -15,6 +16,16 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  try {
+    getConfig();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Server misconfigured";
+    return NextResponse.json(
+      { error: `OCR service unavailable: ${message}` },
+      { status: 503 },
+    );
+  }
+
   const parsed = await parseJsonBody(request, createJobBodySchema);
   if ("error" in parsed) {
     return parsed.error;

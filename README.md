@@ -100,7 +100,16 @@ Trên trang job bạn sẽ thấy:
 | `completed` | Hoàn tất — có thể tải DOCX |
 | `failed` | Lỗi — đọc thông báo lỗi trên màn hình |
 
-Trang tự làm mới mỗi 2 giây khi job đang chạy. Không cần reload thủ công.
+Trang **tự poll** trạng thái job khi đang chạy (không cần reload):
+
+| Giai đoạn | Chu kỳ |
+|-----------|--------|
+| 0–30 giây | 2 giây/lần (progress nhanh) |
+| 30s–2 phút | 5 giây/lần |
+| Sau 2 phút | 10 giây/lần |
+| Sau 10 phút | Dừng auto-poll — bấm **Refresh trạng thái** |
+
+Tab ẩn (chuyển sang tab khác) → tạm dừng poll; quay lại tab → refresh ngay.
 
 ### Bước 3 — Xem trước & tải DOCX
 
@@ -149,8 +158,40 @@ Trang chủ liệt kê **Recent jobs**. Nhấn vào job để mở lại trang c
 | `KV_REST_API_TOKEN` | Không | — | Token KV |
 | `NEXT_PUBLIC_MAX_FILE_SIZE_MB` | Không | `25` | Hiển thị giới hạn trên UI |
 | `USE_INNGEST` | Không | `false` | Bật queue nền (cần cấu hình Inngest) |
+| `LAYOUT_EXPORT_V2` | Không | `false` | Bật xuất DOCX v2 (layout trái/giữa/phải + bảng đầy đủ số) |
+| `MAX_LAYOUT_VERIFY_RETRIES` | Không | `2` | Số lần retry OCR vùng lỗi (Gemini Pro) |
+| `NUMERIC_TOLERANCE_RATIO` | Không | `0.02` | Dung sai % khi đối chiếu SL × đơn giá = thành tiền |
+| `RETRY_CROP_PADDING` | Không | `0.05` | Padding crop ảnh khi verify (tỷ lệ 0–1) |
+| `REGION_LEFT_MAX` | Không | `0.33` | Ngưỡng x trái (normalized bbox) |
+| `REGION_CENTER_MAX` | Không | `0.66` | Ngưỡng x giữa (normalized bbox) |
 
 Nếu **không** cấu hình KV, app dùng file store dưới `.tmp/ocr-jobs/` khi chạy local. **Trên Vercel, KV là bắt buộc** — deploy thiếu `KV_REST_API_URL` / `KV_REST_API_TOKEN` sẽ fail-fast khi lưu job.
+
+### PDF có text layer (hóa đơn MISA meInvoice)
+
+PDF điện tử thường có **text layer nhúng sẵn**. Ở chế độ v1, app trích text đó thành đoạn văn phẳng → **mất bảng, mất layout** (đúng như output Word bạn thấy).
+
+Khi **`LAYOUT_EXPORT_V2=true`**, mọi trang PDF đều được **render sang ảnh + OCR layout (Gemini Flash)** — bỏ qua shortcut text layer — rồi xuất DOCX 3 cột + bảng.
+
+```env
+LAYOUT_EXPORT_V2=true
+```
+
+Sau khi đổi env, **restart** `npm run dev` và upload lại file.
+
+### Layout export v2 (`LAYOUT_EXPORT_V2=true`)
+
+Mặc định **tắt** — hành vi v1 không đổi. Khi bật:
+
+1. **Layout OCR (Flash):** Gemini trả JSON block kèm `bbox` (0–1); bỏ qua QR/logo/icon.
+2. **Gộp block:** Text native (PDF/DOCX) nhận bbox synthetic; sắp xếp theo `(page, y, x)`.
+3. **Completeness gate:** Kiểm tra bảng hàng hóa (≥4 cột), ô số không rỗng, SL × đơn giá ≈ thành tiền.
+4. **Verify pass (Pro):** Crop vùng lỗi, OCR lại, merge — tối đa `MAX_LAYOUT_VERIFY_RETRIES` lần/trang.
+5. **DOCX layout:** Band 3 cột (trái/giữa/phải) + bảng full-width; preview UI vẫn danh sách text v1.
+
+**Chi phí ước tính (1 hóa đơn VAT ~1 trang):** ~1× Flash layout + 0–2× Pro verify ≈ vài cent USD (tùy model billing). Document AI **chưa** tích hợp — fallback tương lai nếu Gemini layout không đủ.
+
+**Bật production:** Chỉ set `LAYOUT_EXPORT_V2=true` sau khi pass thủ công upload PDF hóa đơn MISA (xem `tests/fixtures/README.md` — file fixture không commit vào repo).
 
 ### Dùng cá nhân — không cần đăng nhập
 
@@ -191,6 +232,7 @@ vercel deploy
 | Upload failed / 400 Bad Request | Blob store **private** nhưng code dùng `public`, hoặc thiếu token | App dùng `access: private` — kiểm tra `BLOB_READ_WRITE_TOKEN` (không bọc dấu `"`) |
 | Upload failed | Thiếu `BLOB_READ_WRITE_TOKEN` | Kiểm tra `.env.local` hoặc Vercel env |
 | Job failed ngay | Thiếu / sai `GEMINI_API_KEY` | Tạo lại key tại AI Studio |
+| **503 / high demand** | Model Gemini quá tải tạm thời | App tự retry + fallback model; đổi `GEMINI_OCR_MODEL=gemini-2.0-flash` hoặc chờ vài phút rồi upload lại |
 | Job stuck `processing` | Timeout hoặc cold start | Chờ hết timeout; gọi lại `POST /api/jobs/[id]/process` trả `Already processing` — reset thủ công ngoài scope v1 |
 | Job mất sau vài phút | Không có KV trên Vercel | Thêm Upstash Redis integration |
 | Unsupported file type | `.doc` hoặc định dạng lạ | Chuyển sang PDF/DOCX |
@@ -200,6 +242,8 @@ vercel deploy
 ---
 
 ## Cấu trúc thư mục
+
+> **Đọc theo luồng hoạt động:** xem [`docs/FLOW-GUIDE.md`](docs/FLOW-GUIDE.md) — mô tả chi tiết từng folder/file và thứ tự đọc đề xuất.
 
 ```
 app/                       # Next.js App Router (API + pages)
@@ -211,8 +255,8 @@ lib/                       # Production code only (no *.test.ts)
   api/                     # Zod schemas + request parsing
   jobs/                    # Store, pipeline, trigger (process-job)
   parsers/                 # PDF / DOCX / image
-  ocr/                     # Gemini client + batch processor
-  export/                  # DOCX builder
+  ocr/                     # Gemini client + batch processor + layout gate
+  export/                  # DOCX builder (v1 linear + v2 layout)
   blob.ts, config.ts, …    # Shared infra
 tests/                     # Vitest — mirrors lib/ layout
   lib/

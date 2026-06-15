@@ -14,27 +14,126 @@ import {
 } from "../types";
 import {
   OCR_SYSTEM_PROMPT,
+  LAYOUT_OCR_SYSTEM_PROMPT,
+  STRUCTURE_SYSTEM_PROMPT,
   buildOcrUserPrompt,
+  buildLayoutOcrUserPrompt,
+  buildStructurePrompt,
   parseOcrJsonResponse,
 } from "./prompts";
+import {
+  normalizeLayoutBlocks,
+  parseBboxFromRaw,
+} from "./layout-normalize";
 
-function getModel(modelName: string): GenerativeModel {
+function getModel(
+  modelName: string,
+  systemInstruction: string,
+  jsonResponse = true,
+): GenerativeModel {
   const config = getConfig();
   const genAI = new GoogleGenerativeAI(config.GEMINI_API_KEY);
   return genAI.getGenerativeModel({
     model: modelName,
-    systemInstruction: OCR_SYSTEM_PROMPT,
+    systemInstruction,
+    generationConfig: jsonResponse
+      ? { responseMimeType: "application/json" }
+      : undefined,
   });
+}
+
+function getOcrModel(modelName: string): GenerativeModel {
+  return getModel(modelName, OCR_SYSTEM_PROMPT);
+}
+
+function getLayoutOcrModel(modelName: string): GenerativeModel {
+  return getModel(modelName, LAYOUT_OCR_SYSTEM_PROMPT);
+}
+
+function getStructureModel(modelName: string): GenerativeModel {
+  return getModel(modelName, STRUCTURE_SYSTEM_PROMPT);
 }
 
 function isRetryableError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return (
     message.includes("429") ||
+    message.includes("503") ||
+    message.includes("UNAVAILABLE") ||
     message.includes("RESOURCE_EXHAUSTED") ||
+    message.includes("Service Unavailable") ||
+    message.includes("high demand") ||
     message.includes("timeout") ||
-    message.includes("Timeout") ||
-    message.includes("503")
+    message.includes("Timeout")
+  );
+}
+
+function parseModelList(primary: string, fallbacksCsv: string): string[] {
+  const extras = fallbacksCsv
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+  return [...new Set([primary, ...extras])];
+}
+
+function ocrModelNames(config: ReturnType<typeof getConfig>, override?: string): string[] {
+  if (override) {
+    return [override];
+  }
+  return parseModelList(config.GEMINI_OCR_MODEL, config.GEMINI_OCR_MODEL_FALLBACK);
+}
+
+function structureModelNames(
+  config: ReturnType<typeof getConfig>,
+  override?: string,
+): string[] {
+  if (override) {
+    return [override];
+  }
+  return parseModelList(
+    config.GEMINI_STRUCTURE_MODEL,
+    config.GEMINI_STRUCTURE_MODEL_FALLBACK,
+  );
+}
+
+export { structureModelNames };
+
+async function generateTextWithRetry(
+  createModel: (modelName: string) => GenerativeModel,
+  modelNames: string[],
+  parts: Part[],
+  config: ReturnType<typeof getConfig>,
+): Promise<string> {
+  let lastError: unknown;
+
+  for (const modelName of modelNames) {
+    const model = createModel(modelName);
+    for (let attempt = 0; attempt <= config.retryBackoffMs.length; attempt++) {
+      try {
+        const result = await model.generateContent(parts);
+        return result.response.text();
+      } catch (error) {
+        lastError = error;
+        if (error instanceof JobProcessingError) {
+          throw error;
+        }
+        const canRetry =
+          isRetryableError(error) && attempt < config.retryBackoffMs.length;
+        if (canRetry) {
+          await sleep(config.retryBackoffMs[attempt] ?? 2000);
+          continue;
+        }
+        break;
+      }
+    }
+  }
+
+  if (lastError instanceof Error) {
+    throw lastError;
+  }
+  throw new JobProcessingError(
+    JobErrorCode.OCR_FAILED,
+    String(lastError ?? "Gemini request failed"),
   );
 }
 
@@ -85,7 +184,18 @@ function normalizeBlock(raw: Record<string, unknown>, fallbackPage: number): Ocr
         )
     : undefined;
 
-  return { page, type, level, text, language, confidence, rows };
+  const bbox = parseBboxFromRaw(raw);
+
+  return {
+    page,
+    type,
+    level,
+    text,
+    language,
+    confidence,
+    rows,
+    ...(bbox ? { bbox } : {}),
+  };
 }
 
 export function normalizeOcrBlocks(
@@ -134,36 +244,57 @@ export async function ocrInputs(
   pageStart: number,
   pageEnd: number,
   modelName?: string,
+  docFileName?: string,
 ): Promise<OcrBlock[]> {
   const config = getConfig();
-  const model = getModel(modelName ?? config.GEMINI_OCR_MODEL);
+  const hint = docFileName
+    ? `File: ${docFileName}${inputs[0]?.label ? ` | ${inputs[0].label}` : ""}`
+    : inputs[0]?.label;
   const parts: Part[] = [
-    { text: buildOcrUserPrompt(pageStart, pageEnd, inputs[0]?.label) },
+    { text: buildOcrUserPrompt(pageStart, pageEnd, hint) },
     ...inputs.map(inputToPart),
   ];
 
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= config.retryBackoffMs.length; attempt++) {
-    try {
-      const result = await model.generateContent(parts);
-      const text = result.response.text();
-      const parsed = parseOcrJsonResponse(text);
-      const blocks = normalizeOcrBlocks(parsed, pageStart);
-      return assertNonEmptyOcrResult(blocks, inputs, pageStart, pageEnd);
-    } catch (error) {
-      lastError = error;
-      if (
-        error instanceof JobProcessingError ||
-        !isRetryableError(error) ||
-        attempt >= config.retryBackoffMs.length
-      ) {
-        throw error;
-      }
-      await sleep(config.retryBackoffMs[attempt] ?? 1000);
-    }
-  }
+  const text = await generateTextWithRetry(
+    getOcrModel,
+    ocrModelNames(config, modelName),
+    parts,
+    config,
+  );
+  const parsed = parseOcrJsonResponse(text);
+  const blocks = normalizeOcrBlocks(parsed, pageStart);
+  return assertNonEmptyOcrResult(blocks, inputs, pageStart, pageEnd);
+}
 
-  throw lastError;
+export async function ocrLayoutInputs(
+  inputs: OcrInput[],
+  pageStart: number,
+  pageEnd: number,
+  modelName?: string,
+  modelNames?: string[],
+  docFileName?: string,
+): Promise<OcrBlock[]> {
+  const config = getConfig();
+  const parts: Part[] = [
+    {
+      text: buildLayoutOcrUserPrompt(pageStart, pageEnd, {
+        fileName: docFileName,
+        pageLabel: inputs[0]?.label,
+      }),
+    },
+    ...inputs.map(inputToPart),
+  ];
+
+  const text = await generateTextWithRetry(
+    getLayoutOcrModel,
+    modelNames ?? ocrModelNames(config, modelName),
+    parts,
+    config,
+  );
+  const parsed = parseOcrJsonResponse(text);
+  const blocks = normalizeOcrBlocks(parsed, pageStart);
+  const layoutBlocks = normalizeLayoutBlocks(blocks, config, true);
+  return assertNonEmptyOcrResult(layoutBlocks, inputs, pageStart, pageEnd);
 }
 
 export async function refineBlocks(
@@ -171,34 +302,23 @@ export async function refineBlocks(
   modelName?: string,
 ): Promise<OcrBlock[]> {
   const config = getConfig();
-  const model = getModel(modelName ?? config.GEMINI_STRUCTURE_MODEL);
   const parts: Part[] = [
     {
-      text: `Refine these OCR blocks:\n${JSON.stringify(blocks, null, 2)}`,
+      text: `${buildStructurePrompt(blocks.length)}\n\n${JSON.stringify(blocks, null, 2)}`,
     },
   ];
 
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= config.retryBackoffMs.length; attempt++) {
-    try {
-      const result = await model.generateContent(parts);
-      const parsed = parseOcrJsonResponse(result.response.text());
-      const normalized = normalizeOcrBlocks(parsed, blocks[0]?.page ?? 1);
-      return normalized.length > 0 ? normalized : blocks;
-    } catch (error) {
-      if (
-        error instanceof JobProcessingError ||
-        !isRetryableError(error) ||
-        attempt >= config.retryBackoffMs.length
-      ) {
-        if (isRetryableError(error)) {
-          return blocks;
-        }
-        throw error;
-      }
-      await sleep(config.retryBackoffMs[attempt] ?? 1000);
-    }
+  try {
+    const text = await generateTextWithRetry(
+      getStructureModel,
+      structureModelNames(config, modelName),
+      parts,
+      config,
+    );
+    const parsed = parseOcrJsonResponse(text);
+    const normalized = normalizeOcrBlocks(parsed, blocks[0]?.page ?? 1);
+    return normalized.length > 0 ? normalized : blocks;
+  } catch {
+    return blocks;
   }
-
-  return blocks;
 }

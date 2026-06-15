@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { slimJobForStorage } from "@/lib/jobs/job-slim";
-import { JobStatus, type Job } from "@/lib/types";
+import {
+  JobStatus,
+  LayoutRegion,
+  OcrBlockType,
+  type Job,
+} from "@/lib/types";
 
 function makeJob(blockCount: number): Job {
   return {
@@ -12,17 +17,23 @@ function makeJob(blockCount: number): Job {
     progress: { current: blockCount, total: blockCount },
     blocks: Array.from({ length: blockCount }, (_, index) => ({
       page: Math.floor(index / 10) + 1,
-      type: "paragraph" as const,
+      type: OcrBlockType.PARAGRAPH,
       text: `Block ${index}`,
+      bbox: { x: 0.1, y: 0.2, w: 0.3, h: 0.05 },
+      region: LayoutRegion.LEFT,
     })),
     createdAt: new Date().toISOString(),
   };
 }
 
 describe("slimJobForStorage", () => {
-  it("keeps jobs with few blocks unchanged", () => {
+  it("keeps jobs with few blocks unchanged except layout fields stripped", () => {
     const job = makeJob(10);
-    expect(slimJobForStorage(job)).toEqual(job);
+    const slim = slimJobForStorage(job);
+    expect(slim.blocks).toHaveLength(10);
+    expect(slim.blocks?.every((block) => !("bbox" in block) && !("region" in block))).toBe(
+      true,
+    );
   });
 
   it("truncates preview blocks for large jobs", () => {
@@ -31,5 +42,6 @@ describe("slimJobForStorage", () => {
     expect(slim.blocks).toHaveLength(50);
     expect(slim.blocksPreviewTruncated).toBe(true);
     expect(slim.blocksTotalCount).toBe(120);
+    expect(slim.blocks?.every((block) => !("bbox" in block))).toBe(true);
   });
 });

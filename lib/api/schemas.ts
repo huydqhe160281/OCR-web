@@ -29,3 +29,10 @@ export const jobIdParamSchema = z.object({
 });
 
 export type JobIdParam = z.infer<typeof jobIdParamSchema>;
+
+export const bulkJobActionSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(50),
+  action: z.enum(["delete", "download"]),
+});
+
+export type BulkJobActionBody = z.infer<typeof bulkJobActionSchema>;

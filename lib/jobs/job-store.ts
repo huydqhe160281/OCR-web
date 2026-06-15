@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { kv } from "@vercel/kv";
 import { assertProductionKvConfigured, getConfig } from "../config";
@@ -119,6 +119,23 @@ export async function listJobs(limit = 20): Promise<Job[]> {
         new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     )
     .slice(0, limit);
+}
+
+export async function deleteJob(id: string): Promise<boolean> {
+  assertProductionKvConfigured();
+
+  if (isKvEnabled()) {
+    await kv.del(jobKey(id));
+    return true;
+  }
+
+  memoryCache.delete(id);
+  try {
+    await unlink(devJobFile(id));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function updateJob(
